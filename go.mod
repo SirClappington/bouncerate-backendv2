@@ -1,8 +1,6 @@
 module github.com/SirClappington/bouncerate-backendv2
 
-go 1.22.5
-
-toolchain go1.23.2
+go 1.23
 
 require (
 	cloud.google.com/go/storage v1.43.0
