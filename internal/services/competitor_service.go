@@ -149,9 +149,8 @@ func (s *CompetitorService) SearchCompetitors(ctx context.Context, location stri
 func (s *CompetitorService) processCompetitor(ctx context.Context, name, website string) (*Competitor, error) {
 	// First try to map the website
 	mapResult, err := s.firecrawl.MapURL(website, &firecrawl.MapParams{
-		URL: website,
-		// Using formats parameter as shown in docs
-		Format: []string{"map"},
+		IncludeSubdomains: BoolPtr(true),
+		Limit:             IntPtr(500),
 	})
 	if err != nil {
 		s.logger.Printf("Error mapping website %s: %v", website, err)
@@ -165,25 +164,24 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 
 	// If no relevant URLs found through mapping, try crawling
 	if len(relevantURLs) == 0 {
-		crawlResult, err := s.firecrawl.CrawlURL(website, &firecrawl.CrawlParams{
-			URL: website,
-			// Using formats parameter as shown in docs
-			Formats: []string{"crawl"},
-			// Optional parameters for better crawling
-			ExcludePaths: []string{
-				"blog/*",
-				"contact/*",
-				"about/*",
-			},
-			Limit: 100,
-		})
+		s.logger.Printf("No relevant URLs found for website %s, falling back to crawl", website)
+		crawlResult, err := s.firecrawl.AsyncCrawlURL(website, nil)
 		if err != nil {
+			s.logger.Printf("Error initiating crawl for website %s: %v", website, err)
 			return nil, err
 		}
-
-		if crawlResult != nil && crawlResult.Data != nil {
-			relevantURLs = filterRelevantURLs(crawlResult.Links)
-		}
+		
+		if crawlResult != nil && crawlResult.Success == true {
+			crawlID := crawlResult.ID
+			s.logger.Printf("Crawl initiated for website %s with ID %s", website, crawlID)
+			result, err := s.firecrawl.CheckCrawlStatus(crawlID)
+			if err != nil {
+				s.logger.Printf("Error checking crawl status for crawl ID %s: %v", crawlID, err)
+				return nil, err
+		} else {
+			s.logger.Printf("Crawl completed for website %s, found %d links", website, len(result.Data.Links))
+			relevantURLs = filterRelevantURLs(result.Data.Links)
+		}	
 	}
 
 	// Extract product information from relevant pages
@@ -209,56 +207,56 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 }
 
 func (s *CompetitorService) extractProducts(url string) ([]Product, error) {
-	// Create a schema that matches our struct
-	schema := ExtractSchema{}
-	schemaJSON, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal schema: %w", err)
-	}
+    // Create a schema that matches our struct
+    schema := ExtractSchema{}
+    schemaJSON, err := json.Marshal(schema)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal schema: %w", err)
+    }
 
-	// Set up the scrape parameters
-	scrapeParams := &firecrawl.ScrapeParams{
-		Formats: []string{"extract", "schema": json.RawMessage(schemaJSON)},
-		Extract: firecrawl.ExtractConfig{
-			Schema: json.RawMessage(schemaJSON),
-			Prompt: "Extract all rental products from the page. For each product, include its name, rental price, and URL if available. If a price range is given, use the lowest price. Categorize each product as either 'Bounce House', 'Water Slide', 'Obstacle Course', or 'Other'.",
-		},
-	}
+    // Set up the scrape parameters
+    scrapeParams := &firecrawl.ScrapeParams{
+        Formats: []string{"extract"},
+        Extract: firecrawl.ExtractConfig{
+            Schema: json.RawMessage(schemaJSON),
+            Prompt: "Extract all rental products from the page. For each product, include its name, rental price, and URL if available. If a price range is given, use the lowest price. Categorize each product as either 'Bounce House', 'Water Slide', 'Obstacle Course', or 'Other'.",
+        },
+    }
 
-	// Perform the scrape with extraction
-	result, err := s.firecrawl.ScrapeURL(url, scrapeParams)
-	if err != nil {
-		return nil, fmt.Errorf("scrape failed: %w", err)
-	}
+    // Perform the scrape with extraction
+    result, err := s.firecrawl.ScrapeURL(url, scrapeParams)
+    if err != nil {
+        return nil, fmt.Errorf("scrape failed: %w", err)
+    }
 
-	// Parse the extracted data
-	var extractedData struct {
-		Extract ExtractSchema `json:"extract"`
-	}
+    // Parse the extracted data
+    var extractedData struct {
+        Extract ExtractSchema `json:"extract"`
+    }
 
-	if err := json.Unmarshal(result.Data, &extractedData); err != nil {
-		return nil, fmt.Errorf("failed to parse extracted data: %w", err)
-	}
+    if err := json.Unmarshal(result.Data, &extractedData); err != nil {
+        return nil, fmt.Errorf("failed to parse extracted data: %w", err)
+    }
 
-	// Convert to our Product type
-	var products []Product
-	for _, p := range extractedData.Extract.Products {
-		products = append(products, Product{
-			Name:     p.Name,
-			Price:    p.Price,
-			URL:      p.URL,
-			Category: p.Category,
-		})
-	}
+    // Convert to our Product type
+    var products []Product
+    for _, p := range extractedData.Extract.Products {
+        products = append(products, Product{
+            Name:     p.Name,
+            Price:    p.Price,
+            URL:      p.URL,
+            Category: p.Category,
+        })
+    }
 
-	return products, nil
+    return products, nil
 }
 
 func filterRelevantURLs(urls []string) []string {
 	var relevant []string
 	keywords := []string{
 		"/products", "/rentals", "/inventory",
-		"/bounce-house", "/inflatable", "/party",
+		"/bounce-house", "/inflatables",
 		"/catalog", "/equipment", "/items",
 	}
 
@@ -271,4 +269,12 @@ func filterRelevantURLs(urls []string) []string {
 		}
 	}
 	return relevant
+}
+
+func BoolPtr(b bool) *bool {
+	return &b
+}
+
+func IntPtr(i int) *int {
+	return &i
 }

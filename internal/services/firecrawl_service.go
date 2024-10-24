@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 
 	"github.com/mendableai/firecrawl-go"
@@ -58,17 +57,25 @@ func NewFirecrawlClient(apiKey string) (*FirecrawlClient, error) {
 }
 
 // CrawlWebsite initiates a new crawl job for the given website.
-func (fc *FirecrawlClient) CrawlWebsite(website string, excludePaths []string, maxDepth int) (*firecrawl.CrawlStatusResponse, error) {
+func (fc *FirecrawlClient) CrawlWebsite(website string, excludePaths []string, maxDepth int) (*firecrawl.CrawlResponse, error) {
 	crawlParams := &firecrawl.CrawlParams{
 		ExcludePaths: excludePaths,
 		MaxDepth:     &maxDepth,
 	}
 
-	crawlResult, err := fc.Client.CrawlURL(website, crawlParams, nil)
+	crawlResult, err := fc.Client.AsyncCrawlURL(website, crawlParams, nil)
 	if err != nil {
 		return nil, fmt.Errorf("crawl failed: %v", err)
 	}
 	return crawlResult, nil
+}
+
+func (fc *FirecrawlClient) GetCrawlStatus(crawlID string) (*firecrawl.CrawlStatusResponse, error) {
+	status, err := fc.Client.CheckCrawlStatus(crawlID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get crawl status: %v", err)
+	}
+	return status, nil
 }
 
 func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string) (Product, error) {
@@ -154,77 +161,24 @@ func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string)
 	return product, nil
 }
 
-// Helper function to create a pointer to a bool
-func BoolPtr(b bool) *bool {
-	return &b
-}
-
 // MapWebsite initiates a new map job for the given website.
-func (fc *FirecrawlClient) MapWebsite(website string, limit *int) (*MapResponse, error) {
-	url := "https://api.firecrawl.dev/v1/map"
-
-	// Prepare the payload dynamically to include the URL and optional limit
-	payloadMap := map[string]interface{}{
-		"url": website,
-	}
-	if limit != nil {
-		payloadMap["limit"] = *limit
+func (fc *FirecrawlClient) MapWebsite(website string, limit *int) (*firecrawl.MapResponse, error) {
+	params := &firecrawl.MapParams{
+		Limit: limit,
 	}
 
-	payload, err := json.Marshal(payloadMap)
+	mapResponse, err := fc.Client.MapURL(website, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request payload: %v", err)
+		return nil, fmt.Errorf("failed to map website: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %v", err)
-	}
-
-	// Retrieve the API key from environment variables
-	apiKey := os.Getenv("FIRECRAWL_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("API key is missing: please set the FIRECRAWL_API_KEY environment variable")
-	}
-
-	// Set headers
-	req.Header.Add("Authorization", "Bearer "+apiKey)
-	req.Header.Add("Content-Type", "application/json")
-
-	// Execute the request
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute HTTP request: %v", err)
-	}
-	defer res.Body.Close()
-
-	// Check for non-200 status codes and handle errors
-	if res.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(res.Body)
-		return nil, fmt.Errorf("received non-200 status code: %d, response: %s", res.StatusCode, string(body))
-	}
-
-	// Check if the response body is empty or nil
-	if res.Body == nil {
-		return nil, fmt.Errorf("received empty response from Firecrawl API for %s", website)
-	}
-
-	// Parse the response body
-	var mapResponse MapResponse
-	err = json.NewDecoder(res.Body).Decode(&mapResponse)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse Firecrawl API response: %v", err)
-	}
-
-	// Check if the mapping operation was successful
 	if !mapResponse.Success {
 		return nil, fmt.Errorf("map operation failed for %s: %s", website, mapResponse.Error)
 	}
 
-	// Verify that `Links` is not nil or empty to avoid potential nil dereference errors
 	if mapResponse.Links == nil {
 		return nil, fmt.Errorf("received nil Links in response for %s", website)
 	}
 
-	return &mapResponse, nil
+	return mapResponse, nil
 }
