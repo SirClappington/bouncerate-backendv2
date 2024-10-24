@@ -48,6 +48,8 @@ func init() {
 	if err != nil {
 		log.Fatalf("Failed to initialize firebase service: %v", err)
 	}
+
+	analysisService = services.NewAnalysisService(firebaseService, logger)
 }
 
 func handleError(c *gin.Context, err error) {
@@ -69,22 +71,6 @@ func handleError(c *gin.Context, err error) {
 
 	// Handle unknown errors
 	c.JSON(http.StatusInternalServerError, errors.NewInternalError(err))
-}
-
-func searchCompetitors(c *gin.Context) {
-	location := c.Query("location")
-	if location == "" {
-		handleError(c, errors.NewValidationError("location is required"))
-		return
-	}
-
-	result, err := competitorService.SearchCompetitors(c.Request.Context(), location)
-	if err != nil {
-		handleError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, result)
 }
 
 func main() {
@@ -143,6 +129,25 @@ func main() {
 			"averagePrice":   averagePrice,
 			"breakEvenPoint": breakEvenPoint,
 		})
+	})
+
+	r.POST("/search", func(c *gin.Context) {
+		var request struct {
+			Location string `json:"location" binding:"required"`
+		}
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+
+		result, err := competitorService.SearchCompetitors(c.Request.Context(), request.Location)
+		if err != nil {
+			handleError(c, err)
+			return
+		}
+
+		c.JSON(200, result)
 	})
 
 	r.Run()
