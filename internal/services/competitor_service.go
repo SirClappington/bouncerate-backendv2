@@ -12,6 +12,7 @@ import (
 type CompetitorService struct {
 	firecrawl *FirecrawlClient
 	places    *maps.Client
+	firebase  *FirebaseService
 	logger    *log.Logger
 }
 
@@ -45,7 +46,7 @@ type ExtractSchema struct {
 	Products []ProductSchema `json:"products"`
 }
 
-func NewCompetitorService(firecrawlKey, placesKey string, logger *log.Logger) (*CompetitorService, error) {
+func NewCompetitorService(firecrawlKey, placesKey, firebaseCredentialsFile, firebaseBucketName string, logger *log.Logger) (*CompetitorService, error) {
 	// Initialize Firecrawl
 	firecrawlClient, err := NewFirecrawlClient(firecrawlKey)
 	if err != nil {
@@ -58,9 +59,16 @@ func NewCompetitorService(firecrawlKey, placesKey string, logger *log.Logger) (*
 		return nil, err
 	}
 
+	// Initialize Firebase Service
+	firebaseService, err := NewFirebaseService(firebaseCredentialsFile, firebaseBucketName, logger)
+	if err != nil {
+		return nil, err
+	}
+
 	return &CompetitorService{
 		firecrawl: firecrawlClient,
 		places:    placesClient,
+		firebase:  firebaseService,
 		logger:    logger,
 	}, nil
 }
@@ -133,6 +141,15 @@ func (s *CompetitorService) SearchCompetitors(ctx context.Context, location stri
 		competitors = append(competitors, competitor)
 	}
 
+	// Store location data in Firebase
+	locationData := Location{
+		Name:        location,
+		Competitors: competitors,
+	}
+	if err := s.firebase.StoreLocation(ctx, locationData); err != nil {
+		s.logger.Printf("Error storing location data: %v", err)
+	}
+
 	return &CompetitorSearchResult{
 		Competitors: competitors,
 		Location:    location,
@@ -199,12 +216,25 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 		return nil, nil // Skip if no products found
 	}
 
-	s.logger.Printf("Found %d products for website %s", len(products), website)
-	return &Competitor{
+	// Store competitor data in Firebase
+	competitor := &Competitor{
 		Name:     name,
 		Website:  website,
 		Products: products,
-	}, nil
+	}
+	if err := s.firebase.StoreCompetitor(ctx, name, *competitor); err != nil {
+		s.logger.Printf("Error storing competitor data: %v", err)
+	}
+
+	// Store product data in Firebase
+	for _, product := range products {
+		if err := s.firebase.StoreProduct(ctx, name, competitor.Name, product.Category, product); err != nil {
+			s.logger.Printf("Error storing product data: %v", err)
+		}
+	}
+
+	s.logger.Printf("Found %d products for website %s", len(products), website)
+	return competitor, nil
 }
 
 func filterRelevantURLs(urls []string) []string {

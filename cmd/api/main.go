@@ -13,6 +13,8 @@ import (
 
 var (
 	competitorService *services.CompetitorService
+	firebaseService   *services.FirebaseService
+	analysisService   *services.AnalysisService
 	logger            *log.Logger
 )
 
@@ -30,10 +32,21 @@ func init() {
 	competitorService, err = services.NewCompetitorService(
 		os.Getenv("FIRECRAWL_API_KEY"),
 		os.Getenv("GOOGLE_PLACES_API_KEY"),
+		os.Getenv("FIREBASE_CREDENTIALS_FILE"),
+		os.Getenv("FIREBASE_BUCKET_NAME"),
 		logger,
 	)
 	if err != nil {
 		log.Fatalf("Failed to initialize competitor service: %v", err)
+	}
+
+	firebaseService, err = services.NewFirebaseService(
+		os.Getenv("FIREBASE_CREDENTIALS_FILE"),
+		os.Getenv("FIREBASE_BUCKET_NAME"),
+		logger,
+	)
+	if err != nil {
+		log.Fatalf("Failed to initialize firebase service: %v", err)
 	}
 }
 
@@ -74,40 +87,63 @@ func searchCompetitors(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// Handler for getting competitor analysis
-func getCompetitorAnalysis(c *gin.Context) {
-	location := c.Query("location")
-	category := c.Query("category")
+func main() {
+	r := gin.Default()
 
-	if location == "" || category == "" {
-		c.JSON(400, gin.H{"error": "location and category are required"})
-		return
-	}
+	r.POST("/upload", func(c *gin.Context) {
+		filePath := c.PostForm("file_path")
+		objectName := c.PostForm("object_name")
 
-	// TODO: Implement competitor analysis
-	c.JSON(200, gin.H{
-		"message":  "Successfully analyzed competitors",
-		"location": location,
-		"category": category,
+		if err := firebaseService.UploadFile(c.Request.Context(), filePath, objectName); err != nil {
+			handleError(c, err)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully"})
 	})
-}
 
-// Handler for purchase analysis
-func analyzePurchase(c *gin.Context) {
-	var request struct {
-		ProductType   string  `json:"productType" binding:"required"`
-		PurchasePrice float64 `json:"purchasePrice" binding:"required"`
-		Location      string  `json:"location" binding:"required"`
-	}
+	r.POST("/download", func(c *gin.Context) {
+		objectName := c.PostForm("object_name")
+		destPath := c.PostForm("dest_path")
 
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
+		if err := firebaseService.DownloadFile(c.Request.Context(), objectName, destPath); err != nil {
+			handleError(c, err)
+			return
+		}
 
-	// TODO: Implement purchase analysis
-	c.JSON(200, gin.H{
-		"message": "Successfully analyzed purchase",
-		"request": request,
+		c.JSON(http.StatusOK, gin.H{"message": "File downloaded successfully"})
 	})
+
+	r.POST("/analyze-purchase", func(c *gin.Context) {
+		var request struct {
+			ProductType   string  `json:"productType" binding:"required"`
+			PurchasePrice float64 `json:"purchasePrice" binding:"required"`
+			Location      string  `json:"location" binding:"required"`
+		}
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+
+		averagePrice, err := analysisService.CalculateAveragePrice(c.Request.Context(), request.Location, request.ProductType)
+		if err != nil {
+			handleError(c, err)
+			return
+		}
+
+		breakEvenPoint, err := analysisService.CalculateBreakEvenPoint(request.PurchasePrice, averagePrice)
+		if err != nil {
+			handleError(c, err)
+			return
+		}
+
+		c.JSON(200, gin.H{
+			"message":        "Successfully analyzed purchase",
+			"averagePrice":   averagePrice,
+			"breakEvenPoint": breakEvenPoint,
+		})
+	})
+
+	r.Run()
 }

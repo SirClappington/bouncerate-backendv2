@@ -14,3 +14,8 @@ type Competitor struct {
 	Website  string    `json:"website"`
 	Products []Product `json:"products"`
 }
+
+type Location struct {
+	Name        string       `json:"name"`
+	Competitors []Competitor `json:"competitors"`
+}
