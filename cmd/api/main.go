@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/SirClappington/bouncerate-backendv2/internal/errors"
+	"github.com/SirClappington/bouncerate-backendv2/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"github.com/yourusername/bouncerate-backend/internal/errors"
-	"github.com/yourusername/bouncerate-backend/internal/services"
 )
 
 var (
