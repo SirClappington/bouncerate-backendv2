@@ -157,7 +157,7 @@ func (s *CompetitorService) SearchCompetitors(ctx context.Context, location stri
 func (s *CompetitorService) processCompetitor(ctx context.Context, name, website string) (*Competitor, error) {
 	// First try to map the website
 	s.logger.Printf("Mapping website: %s", website)
-	mapResponse, err := s.firecrawl.MapWebsite(ctx, website, IntPtr(2500))
+	mapResponse, err := s.firecrawl.MapWebsite(ctx, website)
 	if err != nil {
 		s.logger.Printf("Error mapping website %s: %v", website, err)
 		// Continue with crawl as fallback

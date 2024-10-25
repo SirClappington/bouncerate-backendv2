@@ -277,50 +277,23 @@ func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string)
 }
 
 // MapWebsite initiates a new map job for the given website.
-func (fc *FirecrawlClient) MapWebsite(ctx context.Context, website string, limit *int) (*MapResponse, error) {
+func (fc *FirecrawlClient) MapWebsite(ctx context.Context, website string) (*MapResponse, error) {
 	if !fc.limiter.Allow() {
 		return nil, fmt.Errorf("rate limit exceeded")
 	}
 
-	url := fmt.Sprintf("%smap", fc.baseURL)
-	requestBody := map[string]interface{}{
-		"website": website,
-		"limit":   limit,
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
+	resp, err := fc.Client.MapURL(website, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request body: %v", err)
+		return nil, fmt.Errorf("failed to map website: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
+	if !resp.Success {
+		return nil, fmt.Errorf("failed to map website: %s", resp.Error)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to map website: %s", string(body))
-	}
-
-	var mapResponse MapResponse
-	if err := json.Unmarshal(body, &mapResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse map response: %v", err)
-	}
-
-	return &mapResponse, nil
+	return &MapResponse{
+		Success: resp.Success,
+		Error:   resp.Error,
+		Links:   resp.Links,
+	}, nil
 }
