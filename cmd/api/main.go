@@ -92,9 +92,14 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"message": "File uploaded successfully"})
 	})
 
-	r.POST("/download", func(c *gin.Context) {
-		objectName := c.PostForm("object_name")
-		destPath := c.PostForm("dest_path")
+	r.GET("/download", func(c *gin.Context) {
+		objectName := c.Query("object_name")
+		destPath := c.Query("dest_path")
+
+		if objectName == "" || destPath == "" {
+			c.JSON(400, gin.H{"error": "object_name and dest_path query parameters are required"})
+			return
+		}
 
 		if err := firebaseService.DownloadFile(c.Request.Context(), objectName, destPath); err != nil {
 			handleError(c, err)
@@ -135,17 +140,14 @@ func main() {
 		})
 	})
 
-	r.POST("/search", func(c *gin.Context) {
-		var request struct {
-			Location string `json:"location" binding:"required"`
-		}
-
-		if err := c.ShouldBindJSON(&request); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+	r.GET("/search", func(c *gin.Context) {
+		location := c.Query("location")
+		if location == "" {
+			c.JSON(400, gin.H{"error": "location query parameter is required"})
 			return
 		}
 
-		result, err := competitorService.SearchCompetitors(c.Request.Context(), request.Location)
+		result, err := competitorService.SearchCompetitors(c.Request.Context(), location)
 		if err != nil {
 			handleError(c, err)
 			return
