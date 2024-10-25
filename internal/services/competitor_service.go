@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"googlemaps.github.io/maps"
 )
@@ -163,6 +164,9 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 		// Continue with crawl as fallback
 	}
 
+	// Wait for the map process to complete
+	time.Sleep(3 * time.Second)
+
 	var relevantURLs []string
 	if mapResponse != nil && mapResponse.Links != nil {
 		s.logger.Printf("Found %d links from mapping for website %s", len(mapResponse.Links), website)
@@ -205,6 +209,10 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 			s.logger.Printf("Error extracting products from %s: %v", url, err)
 			continue // Skip failed extractions
 		}
+
+		// Wait for the scrape process to complete
+		time.Sleep(3 * time.Second)
+
 		products = append(products, extractedProducts)
 	}
 
