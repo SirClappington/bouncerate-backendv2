@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -82,7 +83,7 @@ func (s *CompetitorService) SearchCompetitors(ctx context.Context, location stri
 
 	response, err := s.places.TextSearch(ctx, searchRequest)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error searching for competitors: %v", err)
 	}
 
 	// Process competitors concurrently with rate limiting
@@ -141,13 +142,9 @@ func (s *CompetitorService) SearchCompetitors(ctx context.Context, location stri
 		competitors = append(competitors, competitor)
 	}
 
-	// Store location data in Firebase
-	locationData := Location{
-		Name:        location,
-		Competitors: competitors,
-	}
-	if err := s.firebase.StoreLocation(ctx, locationData); err != nil {
-		s.logger.Printf("Error storing location data: %v", err)
+	// Check for errors
+	for err := range errs {
+		s.logger.Printf("Error encountered: %v", err)
 	}
 
 	return &CompetitorSearchResult{
@@ -160,7 +157,7 @@ func (s *CompetitorService) SearchCompetitors(ctx context.Context, location stri
 func (s *CompetitorService) processCompetitor(ctx context.Context, name, website string) (*Competitor, error) {
 	// First try to map the website
 	s.logger.Printf("Mapping website: %s", website)
-	mapResponse, err := s.firecrawl.MapWebsite(website, IntPtr(500))
+	mapResponse, err := s.firecrawl.MapWebsite(website, IntPtr(2500))
 	if err != nil {
 		s.logger.Printf("Error mapping website %s: %v", website, err)
 		// Continue with crawl as fallback
@@ -216,25 +213,12 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 		return nil, nil // Skip if no products found
 	}
 
-	// Store competitor data in Firebase
-	competitor := &Competitor{
+	s.logger.Printf("Found %d products for website %s", len(products), website)
+	return &Competitor{
 		Name:     name,
 		Website:  website,
 		Products: products,
-	}
-	if err := s.firebase.StoreCompetitor(ctx, name, *competitor); err != nil {
-		s.logger.Printf("Error storing competitor data: %v", err)
-	}
-
-	// Store product data in Firebase
-	for _, product := range products {
-		if err := s.firebase.StoreProduct(ctx, name, competitor.Name, product.Category, product); err != nil {
-			s.logger.Printf("Error storing product data: %v", err)
-		}
-	}
-
-	s.logger.Printf("Found %d products for website %s", len(products), website)
-	return competitor, nil
+	}, nil
 }
 
 func filterRelevantURLs(urls []string) []string {
