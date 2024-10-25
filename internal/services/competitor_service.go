@@ -48,9 +48,9 @@ type ExtractSchema struct {
 	Products []ProductSchema `json:"products"`
 }
 
-func NewCompetitorService(firecrawlKey, placesKey, firebaseCredentialsFile, firebaseBucketName string, logger *log.Logger) (*CompetitorService, error) {
+func NewCompetitorService(firecrawlKey, firecrawlBaseURL, placesKey, firebaseCredentialsFile, firebaseBucketName string, logger *log.Logger) (*CompetitorService, error) {
 	// Initialize Firecrawl
-	firecrawlClient, err := NewFirecrawlClient(firecrawlKey)
+	firecrawlClient, err := NewFirecrawlClient(firecrawlKey, firecrawlBaseURL)
 	if err != nil {
 		return nil, err
 	}

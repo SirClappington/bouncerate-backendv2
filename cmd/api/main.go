@@ -31,6 +31,7 @@ func init() {
 	var err error
 	competitorService, err = services.NewCompetitorService(
 		os.Getenv("FIRECRAWL_API_KEY"),
+		os.Getenv("FIRECRAWL_BASE_URL"),
 		os.Getenv("GOOGLE_PLACES_API_KEY"),
 		os.Getenv("FIREBASE_CREDENTIALS_FILE"),
 		os.Getenv("FIREBASE_BUCKET_NAME"),

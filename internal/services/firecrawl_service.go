@@ -19,7 +19,6 @@ import (
 type FirecrawlClient struct {
 	apiKey  string
 	baseURL string
-	Version string
 	Client  *firecrawl.FirecrawlApp
 	limiter *RateLimiter
 }
@@ -94,10 +93,16 @@ func (rl *RateLimiter) Allow() bool {
 }
 
 // NewFireCrawlClient creates a new instance of FireCrawlClient.
-func NewFirecrawlClient(apiKey string) (*FirecrawlClient, error) {
+func NewFirecrawlClient(apiKey string, baseURL string) (*FirecrawlClient, error) {
+	client, err := firecrawl.NewFirecrawlApp(apiKey, baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize FirecrawlApp: %v", err)
+	}
+
 	return &FirecrawlClient{
 		apiKey:  apiKey,
-		baseURL: "https://api.firecrawl.dev/",
+		baseURL: baseURL,
+		Client:  client,
 		limiter: NewRateLimiter(5, time.Second), // 5 requests per second
 	}, nil
 }
@@ -280,6 +285,10 @@ func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string)
 func (fc *FirecrawlClient) MapWebsite(ctx context.Context, website string) (*MapResponse, error) {
 	if !fc.limiter.Allow() {
 		return nil, fmt.Errorf("rate limit exceeded")
+	}
+
+	if fc.Client == nil {
+		return nil, fmt.Errorf("FirecrawlApp client is not initialized")
 	}
 
 	resp, err := fc.Client.MapURL(website, nil)
