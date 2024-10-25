@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 
@@ -14,8 +15,8 @@ import (
 
 // FireCrawlClient manages interactions with the FireCrawl API.
 type FirecrawlClient struct {
-	APIKey  string
-	BaseURL string
+	apiKey  string
+	baseURL string
 	Version string
 	Client  *firecrawl.FirecrawlApp
 }
@@ -37,45 +38,83 @@ type ExtractPrompt struct {
 	ExtractPrompt string
 }
 
+type CrawlResponse struct {
+	// Define the fields based on the expected response
+}
+
+type StatusResponse struct {
+	// Define the fields based on the expected response
+}
+
 // NewFireCrawlClient creates a new instance of FireCrawlClient.
 func NewFirecrawlClient(apiKey string) (*FirecrawlClient, error) {
-	baseURL := "https://api.firecrawl.dev/v1/"
-
-	// Initialize FirecrawlApp
-	app, err := firecrawl.NewFirecrawlApp(apiKey, baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize FirecrawlApp: %v", err)
-	}
-
-	client := &FirecrawlClient{
-		APIKey:  apiKey,
-		BaseURL: baseURL,
-		Client:  app,
-	}
-
-	return client, nil
+	return &FirecrawlClient{
+		apiKey:  apiKey,
+		baseURL: "https://api.firecrawl.com",
+	}, nil
 }
 
 // CrawlWebsite initiates a new crawl job for the given website.
-func (fc *FirecrawlClient) CrawlWebsite(website string, excludePaths []string, maxDepth int) (*firecrawl.CrawlResponse, error) {
-	crawlParams := &firecrawl.CrawlParams{
-		ExcludePaths: excludePaths,
-		MaxDepth:     &maxDepth,
+func (fc *FirecrawlClient) CrawlWebsite(website string, options interface{}, limit int) (*firecrawl.CrawlResponse, error) {
+	url := fmt.Sprintf("%s/crawl?website=%s&limit=%d", fc.baseURL, website, limit)
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
-	crawlResult, err := fc.Client.AsyncCrawlURL(website, crawlParams, nil)
-	if err != nil {
-		return nil, fmt.Errorf("crawl failed: %v", err)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to crawl website: %s", string(body))
 	}
-	return crawlResult, nil
+
+	var crawlResponse CrawlResponse
+	if err := json.Unmarshal(body, &crawlResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse crawl response: %v", err)
+	}
+
+	return &firecrawl.CrawlResponse{}, nil
 }
 
 func (fc *FirecrawlClient) GetCrawlStatus(crawlID string) (*firecrawl.CrawlStatusResponse, error) {
-	status, err := fc.Client.CheckCrawlStatus(crawlID)
+	url := fmt.Sprintf("%s/status?crawl_id=%s", fc.baseURL, crawlID)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get crawl status: %v", err)
+		return nil, err
 	}
-	return status, nil
+	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get crawl status: %s", string(body))
+	}
+
+	var statusResponse StatusResponse
+	if err := json.Unmarshal(body, &statusResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse status response: %v", err)
+	}
+
+	return &firecrawl.CrawlStatusResponse{}, nil
 }
 
 func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string) (Product, error) {
@@ -113,13 +152,13 @@ func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string)
 		return Product{}, fmt.Errorf("failed to marshal request body: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", fc.BaseURL+"scrape", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", fc.baseURL+"scrape", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return Product{}, fmt.Errorf("failed to create request: %v", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+fc.APIKey)
+	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -162,23 +201,33 @@ func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string)
 }
 
 // MapWebsite initiates a new map job for the given website.
-func (fc *FirecrawlClient) MapWebsite(website string, limit *int) (*firecrawl.MapResponse, error) {
-	params := &firecrawl.MapParams{
-		Limit: limit,
-	}
-
-	mapResponse, err := fc.Client.MapURL(website, params)
+func (fc *FirecrawlClient) MapWebsite(website string, limit *int) (*MapResponse, error) {
+	url := fmt.Sprintf("%s/map?website=%s&limit=%d", fc.baseURL, website, *limit)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to map website: %v", err)
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
-	if !mapResponse.Success {
-		return nil, fmt.Errorf("map operation failed for %s: %s", website, mapResponse.Error)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to map website: %s", string(body))
 	}
 
-	if mapResponse.Links == nil {
-		return nil, fmt.Errorf("received nil Links in response for %s", website)
+	var mapResponse MapResponse
+	if err := json.Unmarshal(body, &mapResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse map response: %v", err)
 	}
 
-	return mapResponse, nil
+	return &mapResponse, nil
 }
