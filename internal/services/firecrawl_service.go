@@ -9,6 +9,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/mendableai/firecrawl-go"
 )
@@ -19,6 +21,7 @@ type FirecrawlClient struct {
 	baseURL string
 	Version string
 	Client  *firecrawl.FirecrawlApp
+	limiter *RateLimiter
 }
 
 type MapParams struct {
@@ -46,32 +49,95 @@ type StatusResponse struct {
 	// Define the fields based on the expected response
 }
 
+type RateLimiter struct {
+	tokens        int
+	maxTokens     int
+	tokenInterval time.Duration
+	mu            sync.Mutex
+}
+
+func NewRateLimiter(maxTokens int, tokenInterval time.Duration) *RateLimiter {
+	rl := &RateLimiter{
+		tokens:        maxTokens,
+		maxTokens:     maxTokens,
+		tokenInterval: tokenInterval,
+	}
+
+	go rl.refillTokens()
+
+	return rl
+}
+
+func (rl *RateLimiter) refillTokens() {
+	ticker := time.NewTicker(rl.tokenInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		rl.mu.Lock()
+		if rl.tokens < rl.maxTokens {
+			rl.tokens++
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *RateLimiter) Allow() bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	if rl.tokens > 0 {
+		rl.tokens--
+		return true
+	}
+
+	return false
+}
+
 // NewFireCrawlClient creates a new instance of FireCrawlClient.
 func NewFirecrawlClient(apiKey string) (*FirecrawlClient, error) {
 	return &FirecrawlClient{
 		apiKey:  apiKey,
-		baseURL: "https://api.firecrawl.dev/v1",
+		baseURL: "https://api.firecrawl.com/",
+		limiter: NewRateLimiter(5, time.Second), // 5 requests per second
 	}, nil
 }
 
 // CrawlWebsite initiates a new crawl job for the given website.
-func (fc *FirecrawlClient) CrawlWebsite(website string, options interface{}, limit int) (*firecrawl.CrawlResponse, error) {
-	url := fmt.Sprintf("%s/crawl?website=%s&limit=%d", fc.baseURL, website, limit)
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		return nil, err
+func (fc *FirecrawlClient) CrawlWebsite(ctx context.Context, website string, options interface{}, limit int) (*firecrawl.CrawlResponse, error) {
+	if !fc.limiter.Allow() {
+		return nil, fmt.Errorf("rate limit exceeded")
 	}
+
+	url := fmt.Sprintf("%scrawl", fc.baseURL)
+	requestBody := map[string]interface{}{
+		"website": website,
+		"limit":   limit,
+		"options": options,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to execute request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -86,23 +152,29 @@ func (fc *FirecrawlClient) CrawlWebsite(website string, options interface{}, lim
 	return &firecrawl.CrawlResponse{}, nil
 }
 
-func (fc *FirecrawlClient) GetCrawlStatus(crawlID string) (*firecrawl.CrawlStatusResponse, error) {
-	url := fmt.Sprintf("%s/status?crawl_id=%s", fc.baseURL, crawlID)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+func (fc *FirecrawlClient) GetCrawlStatus(ctx context.Context, crawlID string) (*firecrawl.CrawlStatusResponse, error) {
+	if !fc.limiter.Allow() {
+		return nil, fmt.Errorf("rate limit exceeded")
 	}
+
+	url := fmt.Sprintf("%sstatus?crawl_id=%s", fc.baseURL, crawlID)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
 	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to execute request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -118,6 +190,10 @@ func (fc *FirecrawlClient) GetCrawlStatus(crawlID string) (*firecrawl.CrawlStatu
 }
 
 func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string) (Product, error) {
+	if !fc.limiter.Allow() {
+		return Product{}, fmt.Errorf("rate limit exceeded")
+	}
+
 	extractSchema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -163,7 +239,7 @@ func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string)
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Product{}, fmt.Errorf("failed to send request: %v", err)
+		return Product{}, fmt.Errorf("failed to execute request: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -201,23 +277,40 @@ func (fc *FirecrawlClient) ScrapeWebsite(ctx context.Context, productURL string)
 }
 
 // MapWebsite initiates a new map job for the given website.
-func (fc *FirecrawlClient) MapWebsite(website string, limit *int) (*MapResponse, error) {
-	url := fmt.Sprintf("%s/map?website=%s&limit=%d", fc.baseURL, website, *limit)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+func (fc *FirecrawlClient) MapWebsite(ctx context.Context, website string, limit *int) (*MapResponse, error) {
+	if !fc.limiter.Allow() {
+		return nil, fmt.Errorf("rate limit exceeded")
 	}
+
+	url := fmt.Sprintf("%smap", fc.baseURL)
+	requestBody := map[string]interface{}{
+		"website": website,
+		"limit":   limit,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+fc.apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to execute request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read response body: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {

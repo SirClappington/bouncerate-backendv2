@@ -157,7 +157,7 @@ func (s *CompetitorService) SearchCompetitors(ctx context.Context, location stri
 func (s *CompetitorService) processCompetitor(ctx context.Context, name, website string) (*Competitor, error) {
 	// First try to map the website
 	s.logger.Printf("Mapping website: %s", website)
-	mapResponse, err := s.firecrawl.MapWebsite(website, IntPtr(2500))
+	mapResponse, err := s.firecrawl.MapWebsite(ctx, website, IntPtr(2500))
 	if err != nil {
 		s.logger.Printf("Error mapping website %s: %v", website, err)
 		// Continue with crawl as fallback
@@ -172,7 +172,7 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 	if len(relevantURLs) == 0 {
 		// If no relevant URLs found through mapping, try crawling
 		s.logger.Printf("No relevant URLs found for website %s, falling back to crawl", website)
-		crawlResponse, err := s.firecrawl.CrawlWebsite(website, nil, 500)
+		crawlResponse, err := s.firecrawl.CrawlWebsite(ctx, website, nil, 500)
 		if err != nil {
 			s.logger.Printf("Error initiating crawl for website %s: %v", website, err)
 			return nil, err
@@ -181,7 +181,7 @@ func (s *CompetitorService) processCompetitor(ctx context.Context, name, website
 		if crawlResponse != nil && crawlResponse.Success {
 			crawlID := crawlResponse.ID
 			s.logger.Printf("Crawl initiated for website %s with ID %s", website, crawlID)
-			statusResponse, err := s.firecrawl.GetCrawlStatus(crawlID)
+			statusResponse, err := s.firecrawl.GetCrawlStatus(ctx, crawlID)
 			if err != nil {
 				s.logger.Printf("Error checking crawl status for crawl ID %s: %v", crawlID, err)
 				return nil, err
