@@ -97,7 +97,7 @@ func (rl *RateLimiter) Allow() bool {
 func NewFirecrawlClient(apiKey string) (*FirecrawlClient, error) {
 	return &FirecrawlClient{
 		apiKey:  apiKey,
-		baseURL: "https://api.firecrawl.com/",
+		baseURL: "https://api.firecrawl.dev/",
 		limiter: NewRateLimiter(5, time.Second), // 5 requests per second
 	}, nil
 }
