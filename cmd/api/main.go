@@ -76,6 +76,10 @@ func handleError(c *gin.Context, err error) {
 func main() {
 	r := gin.Default()
 
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "Welcome to Bounce Rate API!"})
+	})
+
 	r.POST("/upload", func(c *gin.Context) {
 		filePath := c.PostForm("file_path")
 		objectName := c.PostForm("object_name")
@@ -150,5 +154,12 @@ func main() {
 		c.JSON(200, result)
 	})
 
-	r.Run()
+	// Get the PORT from environment variables
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Default port if not specified
+	}
+
+	// Start the Gin server on the specified port
+	r.Run(":" + port)
 }
